@@ -15,20 +15,16 @@ This project forecasts Ontario electricity market clearing prices using data fro
 ## Project Structure
 
 ```
-HOEP-forcasting-project/
-├── data/
-│   ├── raw/            # Raw IESO CSVs (HOEP, demand, generation)
-│   ├── interim/        # Cleaned Parquet files
-│   └── processed/      # Model-ready datasets (stat_dir/, ml_dir/, dl_dir/)
-├── models/             # Trained model artifacts (.pkl, .joblib, .pt)
-├── artifacts/scalers/  # MinMax scalers (scaler_X.pkl, scaler_y.pkl)
-├── notebooks/          # Jupyter notebooks (01–07, run in order)
-├── results/            # Output figures and GRU predictions
-├── src/                # Modular source code (features, models, utils, etc.)
-├── configs/            # Configuration files
-├── data.dvc            # DVC data tracking
-└── requirements.txt
+hoep-electricity-price-forecasting/
+├── notebooks/          # 01 to 07, run in order (see below)
+├── artifacts/scalers/  # MinMax scalers fitted on the training window
+├── results/            # GRU predictions and comparison figures
+├── data.dvc            # DVC pointer; data/ is pulled, not committed
+├── requirements.txt
+└── README.md
 ```
+
+The `data/` directory (raw IESO CSVs, cleaned Parquet, model ready splits) is tracked with DVC and is created by `dvc pull`. Trained model files are written by the notebooks and are not committed.
 
 ---
 
@@ -80,8 +76,8 @@ Run in order:
 
 ```bash
 # Clone the repository
-git clone https://github.com/arjunmoitra/hoppp.git
-cd HOEP-forcasting-project
+git clone https://github.com/arjunmoitra/hoep-electricity-price-forecasting.git
+cd hoep-electricity-price-forecasting
 
 # Create and activate virtual environment
 python -m venv .venv
