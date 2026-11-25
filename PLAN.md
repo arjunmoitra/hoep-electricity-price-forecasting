@@ -1,7 +1,7 @@
 # PLAN.md — HOEP Forecasting: Portfolio → Live Production System
 
-Status: Phase 0 (recon) complete. Nothing has been built yet. This document is the
-checkpoint before Phase 1 starts.
+Status: Phase 0 (recon) complete, both open questions resolved. Nothing has been built yet.
+This document is the checkpoint before Phase 1 starts.
 
 ---
 
@@ -114,49 +114,55 @@ as long as a file stays within the rolling window. But it means:
   its contents: it's 5-minute interchange/hub pricing (Manitoba, Michigan, Minnesota, New York,
   Quebec nodes, Ontario), not the new Ontario Zonal Price product, and it stops dead on
   2025-05-01 — the exact day the old market design retired. It's not a usable substitute.
-- **I need your help here.** IESO may publish a proper historical export for the new zonal price
-  products through a different channel than `reports-public.ieso.ca` (their main site,
-  `ieso.ca`, has a "Data Directory" / historical reports section I can't browse the same way, and
-  there may be an IESO API or data request process). Can you check whether IESO has a bulk
-  historical download for Real Time / Predispatch Ontario Zonal Price going back to May 2025?
-  If not, the honest options are:
-  1. Start the modeled history at whatever the live site gives us (~late July/August 2026) and
-     say so plainly in the README and dashboard — this is actually fine for a portfolio piece
-     as long as it's disclosed, since the system is otherwise fully live and real.
-  2. Begin archiving today and let history accumulate — the dashboard would show "N days of
-     live data" growing over time.
-  Both are legitimate; which do you want? This decides the start date I write into the Phase 1
-  bronze/silver schema.
+- **Resolved — no bulk historical export exists.** Checked IESO's own Data Directory
+  (ieso.ca/power-data/data-directory) directly: it states the Real-Time 5-min Ontario Zonal
+  Energy Price Report keeps **90 days** and the Pre-dispatch Hourly Ontario Zonal Energy Price
+  Report keeps **30 days**, with no bulk/archive download for either — only daily calendar links
+  into the rolling window. The page's "Archive" section covers only decommissioned legacy-market
+  reports (old HOEP era), and the only data-request process mentioned anywhere is for de-identified
+  smart meter data, unrelated. So there is no way to get real Ontario Zonal Price / Predispatch
+  history back to May 2025 — it doesn't exist publicly, from IESO or anyone else.
+- **Decision: start the modeled history wherever our own archiving begins** (backed by whatever
+  the live window still holds on day one — back to ~late July/August 2026 for realtime,
+  ~August 2026 for predispatch), and say so plainly in the README and dashboard rather than
+  implying more history than exists. This is the honest framing for a portfolio piece: "the
+  system has been accumulating live, auditable history since day X" reads better to a hiring
+  manager than a backfilled dataset with a silent gap.
 
 ---
 
-## 3. Databricks serverless network reach — not yet tested
+## 3. Databricks serverless network reach — tested, resolved
 
-This step needs you first. I don't have a Databricks workspace or credentials in this session.
-Please do this now:
+Two separate connectivity questions turned out to matter here, and they resolved in opposite
+directions:
 
-1. Go to https://login.databricks.com/ and sign in to (or create) your Free Edition workspace.
-2. In the workspace, go to **Settings → Developer → Access tokens** and generate a personal
-   access token (or use OAuth — your call), and note your workspace URL
-   (`https://<your-workspace>.cloud.databricks.com`).
-3. Tell me the workspace URL, and either:
-   - run `databricks configure --token` yourself in a terminal you control and tell me when it's
-     done, or
-   - paste the token to me directly in chat so I can configure the CLI here (I won't commit it
-     anywhere, and will discard it from any file I write).
+1. **Can Databricks serverless reach `reports-public.ieso.ca`?** Yes. Arjun ran a one-off
+   `urllib.request.urlopen(...)` against `reports-public.ieso.ca/public/Demand/` from a serverless
+   notebook and got back `200`. So Free Edition's trusted-domain list, whatever it is, does not
+   block IESO. **Ingestion jobs can run natively as Databricks jobs** — no GitHub Actions fetch
+   relay needed, which simplifies Phase 1 considerably from the earlier draft of this plan.
 
-I already have the `databricks-sdk` Python package installed here and a legacy `databricks-cli`
-as a fallback; I'll fetch the current unified Go-based CLI once I can do it without a
-pipe-to-shell install (sandboxed here for safety) — a plain `pip install databricks-sdk` already
-covers everything Phase 0's connectivity test needs, so this isn't blocking you.
+2. **Can I (this session) reach the Databricks workspace API directly?** No. My own sandbox's
+   outbound network is allow-listed the same way Free Edition's is, and the workspace host
+   (`dbc-5f682fdf-0529.cloud.databricks.com`) isn't on that list — both a raw connection and the
+   Python SDK just hang/refuse. I can't run `databricks bundle deploy`, create jobs, or do
+   anything else against the workspace API from here directly.
 
-Once I have credentials, the test itself is small: submit a one-off serverless notebook/job that
-tries an HTTPS GET against `https://reports-public.ieso.ca/public/Demand/` and report what
-happens. If it's blocked (likely, given Free Edition's trusted-domain outbound restriction and
-what I saw from my own sandboxed fetch), Phase 1's ingestion will run as a **GitHub Actions**
-job on a schedule, writing fetched files into a Unity Catalog volume via the Databricks CLI/SDK,
-exactly as your brief proposed. I'll build the Actions workflow either way once we confirm, since
-Free Edition's trusted-domain list is published and very unlikely to include IESO.
+**Resolution:** pull Phase 7's "Asset Bundles + GitHub Actions, redeploy from the repo" idea
+forward and use it as the deployment mechanism from Phase 1 onward, not just as later polish.
+GitHub Actions runners have normal internet access and aren't behind my sandbox's restriction, so
+all `databricks bundle deploy` / job-creation / job-trigger calls will happen inside an Actions
+workflow, authenticated with a Databricks PAT stored as a **GitHub Actions secret**
+(`DATABRICKS_HOST`, `DATABRICKS_TOKEN`) — never held in a file in this session and never pasted
+in chat again after the one-time setup. I write the bundle YAML and the workflow file here; GitHub
+actually executes the deploy. Arjun needs to add those two repo secrets once (exact steps given
+when we get there in Phase 1).
+
+Net effect on the architecture in §4: the "GitHub Actions, scheduled" box in the diagram below is
+no longer a per-hour IESO-fetch relay — ingestion itself runs as a native Databricks job. GitHub
+Actions' job in this project is CI (tests) and **CD** (deploying/updating the Databricks Asset
+Bundle whenever the repo changes, and triggering one-off job runs when needed) — the diagram below
+has been updated accordingly.
 
 ---
 
@@ -164,11 +170,12 @@ Free Edition's trusted-domain list is published and very unlikely to include IES
 
 ```mermaid
 flowchart LR
-    subgraph GH[GitHub Actions, scheduled]
-        A[Fetch IESO XML/CSV files] --> B[Upload to UC Volume]
+    subgraph GH[GitHub Actions, CI/CD]
+        A[Test + lint on push] --> B[databricks bundle deploy]
     end
-    subgraph DBX[Databricks Free Edition, serverless]
-        B --> C[Bronze Delta tables: raw as received]
+    subgraph DBX[Databricks Free Edition, serverless jobs]
+        B --> C0[Ingestion job: fetch IESO XML/CSV directly]
+        C0 --> C[Bronze Delta tables: raw as received]
         C --> D[Silver Delta tables: clean hourly series]
         D --> E[Feature + training job: GRU + RF, MLflow tracking]
         E --> F[Model Registry: champion / challenger aliases]
@@ -218,13 +225,14 @@ in Phase 4, and will lay out the tradeoff again there with real numbers once ing
 
 ## 5. Things only you can do (running list — will grow each phase)
 
-1. Decide the backfill start date question in §2 (no historical bulk source found yet, or tell
-   me where to look).
-2. Authenticate the Databricks CLI / give me a workspace URL + token (§3).
-3. Confirm you're OK with GitHub Actions holding IESO-fetch credentials (none needed — the IESO
-   public reports site needs no auth) and pushing into a Unity Catalog volume via a Databricks
-   service principal token stored as a GitHub Actions secret — I'll tell you exactly what secret
-   to create and where, once we're in Phase 1.
+1. ~~Decide the backfill start date question~~ — resolved, §2.
+2. ~~Authenticate the Databricks CLI / give workspace access~~ — resolved, §3. (Workspace:
+   `dbc-5f682fdf-0529.cloud.databricks.com`. The PAT you pasted in chat was used once to confirm
+   auth and then discarded — not stored anywhere in this session or the repo.)
+3. **New, for Phase 1:** add two GitHub Actions repo secrets so CD can deploy the Asset Bundle —
+   `DATABRICKS_HOST` and `DATABRICKS_TOKEN`. I'll give exact click-by-click steps (Settings →
+   Secrets and variables → Actions → New repository secret) when Phase 1's workflow file is ready
+   for you to wire up — no need to do it before then.
 4. Confirm Databricks Free Edition's job-failure notifications and SQL alerts are enough for
    Phase 5, or whether you specifically want email digests beyond that (I'll check what Free
    Edition actually exposes once we're there, since its feature set is more limited than paid
