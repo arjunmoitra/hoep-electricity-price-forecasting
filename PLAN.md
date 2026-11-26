@@ -1,7 +1,8 @@
 # PLAN.md — HOEP Forecasting: Portfolio → Live Production System
 
-Status: Phase 0 (recon) complete, both open questions resolved. Nothing has been built yet.
-This document is the checkpoint before Phase 1 starts.
+Status: Phase 1 (ingestion) built and pushed to `main`. One verification step
+outstanding before it's safe to actually deploy -- see "Phase 1 summary" at the
+bottom of this document.
 
 ---
 
@@ -253,5 +254,65 @@ in Phase 4, and will lay out the tradeoff again there with real numbers once ing
 
 ---
 
-**Stopping here per your instructions. Nothing beyond recon has been built.** Please answer the
-two items in §2 and §3 (backfill source, and Databricks workspace access) and I'll start Phase 1.
+## 7. Phase 1 summary (ingestion)
+
+Built and pushed to `main`:
+- `src/ingestion/ieso_source.py` — pure-Python IESO directory-listing client and
+  filename parser, fully unit tested.
+- `src/ingestion/parsers.py` — raw file content → normalized rows, one function
+  per report.
+- `src/ingestion/bronze_job.py` — Databricks job entrypoint: fetch-what's-new,
+  idempotent on filename, writes append-only bronze Delta tables.
+- `src/silver/` — dedupe (latest-version-wins for realtime/day-ahead/demand;
+  full publish-time history kept for predispatch, per the "as-of" requirement),
+  data quality checks (missing/duplicate hours, out-of-range prices), and the
+  merge job wiring it together with idempotent `MERGE INTO`.
+- `databricks.yml` + `resources/` — Asset Bundle: hourly ingestion job (8 tasks,
+  serverless-only, no cluster specs anywhere), bronze/silver UC schemas.
+- `.github/workflows/ci.yml` (tests on every push/PR) and `cd.yml`
+  (`databricks bundle deploy` from Actions, since this session can't reach your
+  workspace API directly).
+- 26 passing unit tests, no Spark dependency, so they run in plain CI.
+
+### The one thing I could not finish
+I could not get a tool approval to fetch a real sample file's content during
+this phase (intermittent — retrying is the person's call per that tool's own
+rules, not something I can force). So **the three zonal-price XML parsers are
+written against IESO's general report conventions, not verified against a real
+file.** They're built to fail loudly rather than silently if the schema's
+wrong — `parse_realtime_zonal_price` etc. raise `ParseError` with zero rows
+rather than returning something empty-but-plausible — but "fails loudly" isn't
+the same as "known correct," and I'm not comfortable calling Phase 1 done until
+this is closed. The Demand CSV parser is **not** in this category — it reuses
+the exact column-matching logic the original notebook already parses
+successfully, so that one's solid.
+
+**Fastest fix:** paste me the raw content of one real file here in chat — e.g.
+open `https://reports-public.ieso.ca/public/RealtimeOntarioZonalPrice/PUB_RealtimeOntarioZonalPrice_<any_recent_YYYYMMDDHH>.xml`
+in your browser (pick any filename from that folder's listing) and paste what
+you see, and same for one file from `PredispHourlyOntarioZonalPrice` and
+`DAHourlyOntarioZonalPrice`. I'll fix the parsers against the real schema and
+push a follow-up commit immediately — that's a small, fast change, not a redo
+of this phase.
+
+### Other things for you before/while we move to Phase 2
+1. **Catalog name assumption**: `schemas.yml` assumes a catalog named
+   `workspace` already exists (Free Edition's default). If you've renamed or
+   never had one, open **Catalog** in the left sidebar and tell me what's
+   listed — I'll set the `catalog` variable in `databricks.yml` accordingly.
+2. **GitHub Actions secrets** — add these two under
+   **repo Settings → Secrets and variables → Actions → New repository secret**:
+   - `DATABRICKS_HOST` = `https://dbc-5f682fdf-0529.cloud.databricks.com`
+   - `DATABRICKS_TOKEN` = (generate a fresh one the same way as before —
+     Settings → Developer → Access tokens — since the one you pasted earlier
+     was only ever used locally in this session and discarded, never stored
+     anywhere it could be reused from)
+   Once both are set, pushing to `main` (or running the workflow manually from
+   the Actions tab) will deploy the bundle for real.
+3. Everything else from Phase 0's action list is resolved — nothing else
+   pending from you right now beyond the three items above.
+
+**Not proceeding to Phase 2 (training) until the parser verification above is
+closed and you've had a chance to look at what's here.** Let me know once
+you've pasted a sample file or re-triggered my fetch access, and once the two
+secrets are in place.
