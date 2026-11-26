@@ -1,0 +1,93 @@
+resources:
+  jobs:
+    hoep_ingestion:
+      name: hoep-ingestion-bronze-to-silver
+      description: >
+        Hourly: fetch new IESO files for each report into bronze, then parse
+        and merge into silver. No cluster spec on any task -- Free Edition
+        serverless is the only compute Databricks will offer here anyway.
+      schedule:
+        quartz_cron_expression: "0 5 * * * ?" # :05 past every hour, UTC
+        timezone_id: UTC
+        pause_status: UNPAUSED
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      tasks:
+        - task_key: bronze_realtime
+          spark_python_task:
+            python_file: ./src/ingestion/bronze_job.py
+            parameters:
+              - realtime_ontario_zonal_price
+              - ${var.catalog}
+              - ${var.bronze_schema}
+
+        - task_key: bronze_predispatch
+          spark_python_task:
+            python_file: ./src/ingestion/bronze_job.py
+            parameters:
+              - predispatch_hourly_ontario_zonal_price
+              - ${var.catalog}
+              - ${var.bronze_schema}
+
+        - task_key: bronze_dayahead
+          spark_python_task:
+            python_file: ./src/ingestion/bronze_job.py
+            parameters:
+              - dayahead_hourly_ontario_zonal_price
+              - ${var.catalog}
+              - ${var.bronze_schema}
+
+        - task_key: bronze_demand
+          spark_python_task:
+            python_file: ./src/ingestion/bronze_job.py
+            parameters:
+              - demand
+              - ${var.catalog}
+              - ${var.bronze_schema}
+
+        - task_key: silver_realtime
+          depends_on:
+            - task_key: bronze_realtime
+          spark_python_task:
+            python_file: ./src/silver/merge_job.py
+            parameters:
+              - realtime_ontario_zonal_price
+              - ${var.catalog}
+              - ${var.bronze_schema}
+              - ${var.silver_schema}
+
+        - task_key: silver_predispatch
+          depends_on:
+            - task_key: bronze_predispatch
+          spark_python_task:
+            python_file: ./src/silver/merge_job.py
+            parameters:
+              - predispatch_hourly_ontario_zonal_price
+              - ${var.catalog}
+              - ${var.bronze_schema}
+              - ${var.silver_schema}
+
+        - task_key: silver_dayahead
+          depends_on:
+            - task_key: bronze_dayahead
+          spark_python_task:
+            python_file: ./src/silver/merge_job.py
+            parameters:
+              - dayahead_hourly_ontario_zonal_price
+              - ${var.catalog}
+              - ${var.bronze_schema}
+              - ${var.silver_schema}
+
+        - task_key: silver_demand
+          depends_on:
+            - task_key: bronze_demand
+          spark_python_task:
+            python_file: ./src/silver/merge_job.py
+            parameters:
+              - demand
+              - ${var.catalog}
+              - ${var.bronze_schema}
+              - ${var.silver_schema}

@@ -1,0 +1,35 @@
+# Databricks Asset Bundle for the HOEP -> Ontario Zonal Price production
+# pipeline. Deployed exclusively via GitHub Actions CD (.github/workflows/cd.yml)
+# because this development session cannot reach the Databricks workspace API
+# directly (see PLAN.md section 3) -- `databricks bundle deploy` always runs on
+# a GitHub-hosted runner, authenticated via the DATABRICKS_HOST/DATABRICKS_TOKEN
+# repo secrets, never from here.
+#
+# Free Edition only offers serverless compute, so no cluster/instance-pool
+# resources are defined anywhere in this bundle -- every task below runs on
+# serverless by omitting a cluster spec entirely.
+
+bundle:
+  name: hoep-pipeline
+
+variables:
+  catalog:
+    description: Unity Catalog catalog to write bronze/silver tables into.
+    default: workspace
+  bronze_schema:
+    default: bronze
+  silver_schema:
+    default: silver
+  notification_email:
+    description: Email for job-failure notifications (Phase 5). Set per target.
+    default: ""
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production

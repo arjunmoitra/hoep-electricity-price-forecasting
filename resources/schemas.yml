@@ -1,0 +1,18 @@
+# Creates the bronze/silver schemas on first deploy. Assumes the catalog
+# itself (default: "workspace") already exists -- Databricks Free Edition
+# provisions a default "workspace" catalog automatically, so this should not
+# need Arjun to create a catalog by hand. If deploy fails here with a
+# catalog-not-found error, that assumption was wrong for this workspace and
+# `catalog` needs to be overridden (see PLAN.md Phase 1 action items) to an
+# existing catalog name, checked via Catalog Explorer in the UI.
+resources:
+  schemas:
+    bronze:
+      name: ${var.bronze_schema}
+      catalog_name: ${var.catalog}
+      comment: Raw IESO files as received, append-only.
+
+    silver:
+      name: ${var.silver_schema}
+      catalog_name: ${var.catalog}
+      comment: Cleaned, deduplicated hourly price/demand series plus data quality log.
