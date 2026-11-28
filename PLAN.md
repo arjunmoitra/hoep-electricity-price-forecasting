@@ -1,8 +1,8 @@
 # PLAN.md — HOEP Forecasting: Portfolio → Live Production System
 
-Status: Phase 1 (ingestion) built and pushed to `main`. One verification step
-outstanding before it's safe to actually deploy -- see "Phase 1 summary" at the
-bottom of this document.
+Status: Phase 1 (ingestion) complete, pushed to `main`, parsers verified against
+real IESO files. Waiting on two GitHub Actions secrets before CD can actually
+deploy -- see "Phase 1 summary" at the bottom of this document.
 
 ---
 
@@ -274,26 +274,33 @@ Built and pushed to `main`:
   workspace API directly).
 - 26 passing unit tests, no Spark dependency, so they run in plain CI.
 
-### The one thing I could not finish
-I could not get a tool approval to fetch a real sample file's content during
-this phase (intermittent — retrying is the person's call per that tool's own
-rules, not something I can force). So **the three zonal-price XML parsers are
-written against IESO's general report conventions, not verified against a real
-file.** They're built to fail loudly rather than silently if the schema's
-wrong — `parse_realtime_zonal_price` etc. raise `ParseError` with zero rows
-rather than returning something empty-but-plausible — but "fails loudly" isn't
-the same as "known correct," and I'm not comfortable calling Phase 1 done until
-this is closed. The Demand CSV parser is **not** in this category — it reuses
-the exact column-matching logic the original notebook already parses
-successfully, so that one's solid.
+### Update: parser verification — resolved
+My fetch access came back. Fetched real files directly plus IESO's own report
+help files (`RealtimeOntarioZonalPrice_h1.pdf`, `PredispHourlyOntarioZonalPrice_h1.pdf`,
+both at `reports-public.ieso.ca/docrefs/helpfile/`) and rewrote the three
+zonal-price parsers against the confirmed real schema. The real structure
+differed from the placeholder guess in every report, and one difference was a
+genuine correctness trap worth recording:
 
-**Fastest fix:** paste me the raw content of one real file here in chat — e.g.
-open `https://reports-public.ieso.ca/public/RealtimeOntarioZonalPrice/PUB_RealtimeOntarioZonalPrice_<any_recent_YYYYMMDDHH>.xml`
-in your browser (pick any filename from that folder's listing) and paste what
-you see, and same for one file from `PredispHourlyOntarioZonalPrice` and
-`DAHourlyOntarioZonalPrice`. I'll fix the parsers against the real schema and
-push a follow-up commit immediately — that's a small, fast change, not a redo
-of this phase.
+IESO's help files define the field: *"Zonal Price (Capped) = Energy Reference
+Price at Reference Location + Energy Loss Price + Energy Congestion Price."*
+The field IESO calls "Zonal Price" (XML tag `LmpCap` in the realtime report,
+a literal `<ZonalPrice>` leaf in predispatch/day-ahead) is **already the
+complete, final price** — that formula describes how IESO computed it
+internally, not something to re-sum. The accompanying loss/congestion fields
+are a transparency breakdown, shown alongside it, not additional components to
+add on top. Summing all three would have silently double-counted loss and
+congestion in every single price — exactly the kind of error that would have
+been invisible until the numbers looked subtly, persistently wrong. Tests now
+assert the parsed value is not such a sum.
+
+Also: the realtime report provides a pre-computed `<AveragePrice>` block
+(load-distribution-weighted over the hour's 12 intervals) — used directly
+rather than averaging the 12 raw intervals ourselves, since a simple mean
+wouldn't reproduce IESO's weighted figure.
+
+Pushed in a follow-up commit. All 26 tests still pass. The Demand CSV parser
+needed no changes — confirmed correct against the real file's header row.
 
 ### Other things for you before/while we move to Phase 2
 1. **Catalog name assumption**: `schemas.yml` assumes a catalog named
@@ -312,7 +319,7 @@ of this phase.
 3. Everything else from Phase 0's action list is resolved — nothing else
    pending from you right now beyond the three items above.
 
-**Not proceeding to Phase 2 (training) until the parser verification above is
-closed and you've had a chance to look at what's here.** Let me know once
-you've pasted a sample file or re-triggered my fetch access, and once the two
-secrets are in place.
+**Phase 1 is now complete.** Ready for Phase 2 (training) once you've added the
+two secrets and confirmed the catalog name — or just say go and I'll proceed
+with the `workspace` catalog assumption and flag it again if deploy fails on
+that specific point.
